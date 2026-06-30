@@ -1,0 +1,123 @@
+# All services join a single bridge network so they can reach each other by
+# service name (e.g. redis://redis:6379).  Nothing is exposed to the host
+# beyond the ports we deliberately open below.
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  uploads:       # shared between web and worker so both can read uploaded files
+  results:       # shared between worker (writes Parquet) and web (reads partitions)
+
+services:
+  # ── Postgres ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rhombus}
+      POSTGRES_USER: ${POSTGRES_USER:-rhombus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rhombus}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_net
+    # Expose 5432 on the internal network only — no host port mapping.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rhombus} -d ${POSTGRES_DB:-rhombus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    networks:
+      - app_net
+    # Expose 6379 on the internal network only.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ── Django web server ─────────────────────────────────────────────────────
+  web:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./backend:/app          # live-reload: source changes are reflected immediately
+      - uploads:/app/uploads    # same mount point as worker so file paths match
+      - results:/app/results
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+
+  # ── Celery worker ─────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A config worker --loglevel=info --concurrency=2
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./backend:/app
+      - uploads:/app/uploads    # must be the same path as web so Job.file_path resolves
+      - results:/app/results
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+    # Cap memory so a runaway Spark job cannot starve the host OS.
+    # PySpark launches a JVM subprocess; this limit covers the Celery process +
+    # the forked JVM.  Tune SPARK_DRIVER_MEMORY to stay under this ceiling.
+    mem_limit: "4g"
+    environment:
+      # Spark memory settings are also in .env but we set explicit defaults here
+      # so the compose file is self-documenting.
+      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-2g}
+      SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+
+  # ── React frontend dev server ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./frontend/src:/app/src  # live-reload: Vite HMR picks up source edits
+    ports:
+      - "3000:3000"
+    depends_on:
+      - web
+    networks:
+      - app_net
+    environment:
+      # VITE_API_BASE_URL is the public-facing URL that the *browser* uses
+      # (injected into the built JS bundle by Vite).  localhost:8000 is correct
+      # here because the browser runs on the host machine, not inside Docker.
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+      # VITE_API_PROXY_TARGET is used only by vite.config.ts's server.proxy,
+      # which runs inside the frontend container.  From inside Docker, the
+      # Django service is reachable as http://web:8000, not localhost:8000.
+      VITE_API_PROXY_TARGET: http://web:8000

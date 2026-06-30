@@ -1,0 +1,33 @@
+# Caddyfile — single env-var-driven config for every deployment scenario.
+#
+# CADDY_HOSTNAME is injected by docker-compose from .env.
+# Change the hostname and Caddy handles HTTPS automatically — no other edits needed.
+#
+# Examples:
+#   CADDY_HOSTNAME=1-2-3-4.sslip.io     → real Let's Encrypt cert, no domain purchase
+#   CADDY_HOSTNAME=yourdomain.com        → real Let's Encrypt cert, custom domain
+#   CADDY_HOSTNAME=localhost             → HTTP only (dev/local testing)
+#
+# sslip.io is a public wildcard DNS service: 1-2-3-4.sslip.io resolves to 1.2.3.4.
+# Caddy uses an HTTP-01 ACME challenge (port 80) to prove ownership — no DNS API
+# key needed.  Certificate is issued and auto-renewed by Let's Encrypt for free.
+#
+# Same-origin architecture: the React SPA and the Django API are both served from
+# the same hostname, so the browser never makes a cross-origin request.
+# CORS headers are therefore not needed or sent.
+# ─────────────────────────────────────────────────────────────────────────────
+
+{$CADDY_HOSTNAME} {
+    # Django API — all /api/* paths proxied to gunicorn on the internal network.
+    # Django never receives requests directly from the internet.
+    handle /api/* {
+        reverse_proxy web:8000
+    }
+
+    # React SPA static files.
+    # try_files falls back to index.html so client-side routes (React Router)
+    # work correctly — any path that isn't a real file gets the SPA entry point.
+    root * /srv/frontend
+    file_server
+    try_files {path} /index.html
+}

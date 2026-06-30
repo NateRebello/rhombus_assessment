@@ -1,0 +1,31 @@
+# Production frontend build — outputs a static dist/ directory.
+# Used by docker-compose.prod.yml; NOT the dev server.
+#
+# Stage 1: npm build (React → static HTML/JS/CSS)
+# Stage 2: copy dist to a minimal Alpine image so docker-compose can copy
+#           the files into the shared frontend_dist volume for Caddy to serve.
+
+# ── Stage 1: build ────────────────────────────────────────────────────────────
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Install deps first (separate layer — cached unless package.json changes).
+COPY package.json package-lock.json* ./
+RUN npm ci --prefer-offline
+
+# Copy source.
+COPY . .
+
+# VITE_API_BASE_URL is baked into the JS bundle at build time.
+# It must be the public-facing URL (droplet IP or domain) that
+# the user's browser will actually call — NOT an internal Docker hostname.
+# Pass it via: docker compose build --build-arg VITE_API_BASE_URL=http://1.2.3.4
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
+RUN npm run build
+
+# ── Stage 2: minimal output image ─────────────────────────────────────────────
+FROM alpine:3.19
+COPY --from=builder /app/dist /app/dist

@@ -1,0 +1,187 @@
+# docker-compose.prod.yml — Production deployment on a single Droplet.
+#
+# Key differences from docker-compose.yml (dev):
+#   - Django runs under gunicorn (not runserver).
+#   - No ./backend:/app volume mount — code is baked into the image.
+#   - No ./frontend/src live-reload mount.
+#   - Worker mem_limit reduced to 1 g (safe on 2 GB droplet).
+#   - SPARK_DRIVER_MEMORY=512m / SPARK_EXECUTOR_MEMORY=256m (see memory math below).
+#   - Caddy replaces the dev frontend service: serves the React build as static
+#     files and reverse-proxies /api/* to Django.
+#   - port 8000 is NOT exposed to the host — Caddy is the only entry point.
+#   - All services have restart: unless-stopped.
+#
+# Memory budget — 2 GB (2048 MB) Droplet
+# ─────────────────────────────────────────
+#   OS + kernel + SSH              ~300 MB
+#   Postgres                       ~200 MB
+#   Redis                          ~100 MB
+#   Django / gunicorn (2 workers)  ~200 MB
+#   Caddy                           ~50 MB
+#   ──────────────────────────────────────
+#   Available for worker           ~1198 MB  → cap at 1 g
+#
+#   Inside worker:
+#     Celery process                ~100 MB
+#     Spark JVM (driver_memory=512m
+#       + ~50 % JVM overhead)       ~768 MB
+#     Python / pandas               ~100 MB
+#   Total worker estimate           ~968 MB  (well under 1 g cap)
+#
+# For a 4 GB host (e.g. AWS t3.medium) set in .env:
+#   WORKER_MEM_LIMIT=2g   SPARK_DRIVER_MEMORY=1g   SPARK_EXECUTOR_MEMORY=512m
+#
+# Usage on the Droplet:
+#   docker compose -f docker-compose.prod.yml up -d --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  uploads:
+  results:
+  frontend_dist:   # populated by the frontend one-shot build service
+  caddy_data:      # Caddy stores TLS certificates here (persists across restarts)
+  caddy_config:    # Caddy runtime config
+
+services:
+
+  # ── Postgres ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rhombus}
+      POSTGRES_USER: ${POSTGRES_USER:-rhombus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rhombus} -d ${POSTGRES_DB:-rhombus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ── Django (gunicorn) ─────────────────────────────────────────────────────
+  web:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application
+               --bind 0.0.0.0:8000
+               --workers 2
+               --timeout 120
+               --access-logfile -
+               --error-logfile -"
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - uploads:/app/uploads
+      - results:/app/results
+      # No ./backend:/app mount in production — code is baked into the image.
+    expose:
+      - "8000"   # internal only; Caddy proxies to this
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+
+  # ── Celery worker ─────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A config worker --loglevel=info --concurrency=2
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - uploads:/app/uploads
+      - results:/app/results
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_net
+    # WORKER_MEM_LIMIT is set in .env — default covers a 2 GB Droplet.
+    # For a 4 GB instance (e.g. AWS t3.medium) set WORKER_MEM_LIMIT=2g.
+    mem_limit: "${WORKER_MEM_LIMIT:-1g}"
+    environment:
+      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-512m}
+      SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-256m}
+
+  # ── Frontend build (one-shot) ─────────────────────────────────────────────
+  # This service runs once during `up --build`, copies the Vite build output
+  # into the frontend_dist volume, then exits (restart: "no").
+  # Caddy reads from that volume.  Re-run `up --build` to deploy new frontend
+  # code — this service will rebuild and re-populate the volume.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        # VITE_API_BASE_URL is baked into the JS bundle at build time.
+        # Must be the public URL the browser uses (droplet IP or domain).
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    volumes:
+      - frontend_dist:/frontend_dist
+    command: sh -c "cp -r /app/dist/. /frontend_dist/ && echo 'Frontend dist copied to volume.'"
+    restart: "no"
+    networks:
+      - app_net
+
+  # ── Caddy reverse proxy + HTTPS ───────────────────────────────────────────
+  # Single public entry point: serves the React SPA and proxies /api/* to Django.
+  # CADDY_HOSTNAME drives everything — set it in .env:
+  #   sslip.io HTTPS:   CADDY_HOSTNAME=1-2-3-4.sslip.io
+  #   custom domain:    CADDY_HOSTNAME=yourdomain.com
+  #   local/HTTP:       CADDY_HOSTNAME=localhost
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - frontend_dist:/srv/frontend:ro   # read-only mount of the built React app
+      - caddy_data:/data                 # TLS certificates persist across restarts
+      - caddy_config:/config
+    environment:
+      # Caddy reads {$CADDY_HOSTNAME} from this env var at startup.
+      CADDY_HOSTNAME: ${CADDY_HOSTNAME:-localhost}
+    depends_on:
+      web:
+        condition: service_started
+      frontend:
+        # Wait for the one-shot build to FINISH (exit 0) before Caddy starts
+        # serving from frontend_dist.  Without this, Caddy could start before
+        # the cp command finishes and briefly serve an empty directory.
+        condition: service_completed_successfully
+    networks:
+      - app_net
