@@ -17,8 +17,6 @@ import string
 import sys
 from pathlib import Path
 
-# ── Fake-data pools (kept small so generation stays fast) ────────────────────
-
 FIRST_NAMES = [
     "Alice", "Bob", "Carol", "David", "Eve", "Frank", "Grace", "Heidi",
     "Ivan", "Judy", "Karl", "Laura", "Mallory", "Niaj", "Olivia", "Peggy",

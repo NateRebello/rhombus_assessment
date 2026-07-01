@@ -1,11 +1,4 @@
-/**
- * Typed fetch wrapper for the Django REST API.
- *
- * All network calls in the app go through these functions so:
- *   - The base URL is configured in one place (VITE_API_BASE_URL env var).
- *   - Error handling is consistent (non-2xx responses throw ApiError).
- *   - TypeScript enforces the expected response shapes at call sites.
- */
+/** Typed fetch wrapper for the Django REST API. Base URL from VITE_API_BASE_URL. */
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -26,14 +19,12 @@ async function handleResponse<T>(res: Response): Promise<T> {
       const body = await res.json();
       message = body?.detail ?? body?.message ?? JSON.stringify(body);
     } catch {
-      // response body was not JSON — keep the default message
+      /* non-JSON error body */
     }
     throw new ApiError(res.status, message);
   }
   return res.json() as Promise<T>;
 }
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 export type JobStatus =
   | "QUEUED"
@@ -75,7 +66,6 @@ export interface SuggestPatternsResponse {
 }
 
 export interface JobResultResponse {
-  /** Column-oriented record dict: { [column]: value[] } */
   results: Record<string, unknown[]>;
   total_rows: number;
   page: number;
@@ -83,14 +73,6 @@ export interface JobResultResponse {
   total_pages: number;
 }
 
-// ── API functions ─────────────────────────────────────────────────────────────
-
-/**
- * POST /api/jobs/ — upload a file and create a new job.
- *
- * Sends multipart/form-data; the browser sets the Content-Type boundary
- * automatically, so we do NOT set it manually.
- */
 export async function createJob(params: {
   file: File;
   prompt: string;
@@ -112,12 +94,6 @@ export async function createJob(params: {
   return handleResponse<JobCreateResponse>(res);
 }
 
-/**
- * POST /api/jobs/suggest-patterns/ — classify column samples for PII.
- *
- * Accepts a map of column name → sample values (already parsed client-side).
- * Returns suggestions that can be used to pre-fill the prompt field.
- */
 export async function suggestPatterns(
   columns: Record<string, string[]>
 ): Promise<SuggestPatternsResponse> {
@@ -129,17 +105,11 @@ export async function suggestPatterns(
   return handleResponse<SuggestPatternsResponse>(res);
 }
 
-/**
- * GET /api/jobs/{jobId}/status/ — poll job state.
- */
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   const res = await fetch(`${BASE_URL}/api/jobs/${jobId}/status/`);
   return handleResponse<JobStatusResponse>(res);
 }
 
-/**
- * GET /api/jobs/{jobId}/results/?page=N — paginated Parquet results.
- */
 export async function getJobResults(
   jobId: string,
   page = 1,
@@ -153,9 +123,6 @@ export async function getJobResults(
   return handleResponse<JobResultResponse>(res);
 }
 
-/**
- * POST /api/jobs/{jobId}/cancel/ — request cancellation.
- */
 export async function cancelJob(
   jobId: string
 ): Promise<{ job_id: string; status: JobStatus }> {

@@ -27,7 +27,6 @@ export function ProgressBar({ status, progress, generatedRegex, errorMessage }: 
 
   return (
     <div style={styles.card}>
-      {/* ── Top row: badge + percentage ── */}
       <div style={styles.topRow}>
         <span style={{ ...styles.badge, background: meta.bg, color: meta.textColor }}>
           <span
@@ -42,7 +41,6 @@ export function ProgressBar({ status, progress, generatedRegex, errorMessage }: 
         <span style={{ ...styles.pct, color: meta.color }}>{progress}%</span>
       </div>
 
-      {/* ── Progress track ── */}
       <div style={{ ...styles.track, background: meta.trackColor }}>
         <div
           style={{
@@ -54,14 +52,12 @@ export function ProgressBar({ status, progress, generatedRegex, errorMessage }: 
         />
       </div>
 
-      {/* ── Running hint ── */}
       {status === "RUNNING" && (
         <p style={styles.hint}>
           Processing your data via PySpark — this may take a moment…
         </p>
       )}
 
-      {/* ── Error box ── */}
       {errorMessage && (
         <div style={styles.errorBox}>
           <div style={styles.errorLabel}>Error</div>
@@ -69,7 +65,6 @@ export function ProgressBar({ status, progress, generatedRegex, errorMessage }: 
         </div>
       )}
 
-      {/* ── Technical Details accordion (only when there's a regex to show) ── */}
       {isTerminal && generatedRegex && (
         <div style={styles.accordion}>
           <button

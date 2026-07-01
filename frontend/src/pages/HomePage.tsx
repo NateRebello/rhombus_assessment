@@ -25,7 +25,6 @@ export default function HomePage() {
     try {
       await cancelJob(jobId);
     } catch {
-      // ignore — status will update on the next poll
     } finally {
       setCancelling(false);
     }
@@ -43,7 +42,6 @@ export default function HomePage() {
 
   return (
     <div style={styles.page}>
-      {/* ── Top nav ── */}
       <header style={styles.nav}>
         <div style={styles.navInner}>
           <div style={styles.brand}>
@@ -52,7 +50,6 @@ export default function HomePage() {
           </div>
 
           <div style={styles.navRight}>
-            {/* Job ID chip — visible when a job is active */}
             {jobId && (
               <div style={styles.jobChip}>
                 <span style={styles.jobChipLabel}>Job</span>
@@ -62,14 +59,12 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* "New Job" button — only shown when a job is loaded */}
             {jobId && isTerminal && (
               <button onClick={handleReset} style={styles.newJobBtn}>
                 + New Job
               </button>
             )}
 
-            {/* Cancel button — only during active run */}
             {jobId && isPolling && jobStatus?.status === "RUNNING" && (
               <button
                 onClick={handleCancel}
@@ -87,7 +82,6 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* ── Hero tagline (only on the form view) ── */}
       {!jobId && (
         <div style={styles.hero}>
           <h1 style={styles.heroTitle}>
@@ -101,13 +95,11 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* ── Main content ── */}
       <main style={styles.main}>
         {!jobId ? (
           <UploadForm onJobCreated={handleJobCreated} />
         ) : (
           <div style={styles.jobLayout}>
-            {/* Status card */}
             {jobStatus && (
               <ProgressBar
                 status={jobStatus.status}
@@ -117,7 +109,6 @@ export default function HomePage() {
               />
             )}
 
-            {/* Transient poll error */}
             {pollError && (
               <div style={styles.pollError}>
                 <span style={{ fontWeight: 700 }}>Polling error: </span>
@@ -125,7 +116,6 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* Results table — only when SUCCESS */}
             {jobStatus?.status === "SUCCESS" && jobStatus.row_count !== null && (
               <PaginatedResultTable
                 jobId={jobId}
@@ -134,7 +124,6 @@ export default function HomePage() {
               />
             )}
 
-            {/* Restart prompt after non-success terminal state */}
             {(jobStatus?.status === "FAILED" || jobStatus?.status === "CANCELLED") && (
               <div style={styles.terminalHint}>
                 <span style={styles.terminalHintText}>
@@ -151,7 +140,6 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* ── Footer ── */}
       <footer style={styles.footer}>
         Rhombus · distributed NL-to-regex pipeline · Django + Celery + PySpark
       </footer>

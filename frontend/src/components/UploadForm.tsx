@@ -65,19 +65,16 @@ export function UploadForm({ onJobCreated }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  // PII suggestion state
   const [suggestions, setSuggestions] = useState<PiiSuggestion[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const suggestAbortRef = useRef<AbortController | null>(null);
 
-  // Trigger PII suggestion whenever a CSV file is selected
   const runSuggestions = useCallback(async (selectedFile: File) => {
     if (!selectedFile.name.toLowerCase().endsWith(".csv")) {
       setSuggestions([]);
       return;
     }
 
-    // Cancel any in-flight suggestion request
     suggestAbortRef.current?.abort();
     const abortController = new AbortController();
     suggestAbortRef.current = abortController;
@@ -95,7 +92,7 @@ export function UploadForm({ onJobCreated }: Props) {
         setSuggestions(result.suggestions ?? []);
       }
     } catch {
-      // Suggestions are best-effort; never block the user
+      // best-effort — never block submission
     } finally {
       if (!abortController.signal.aborted) {
         setSuggestLoading(false);
@@ -109,13 +106,11 @@ export function UploadForm({ onJobCreated }: Props) {
     if (selectedFile) runSuggestions(selectedFile);
   };
 
-  // Clean up on unmount
   useEffect(() => () => suggestAbortRef.current?.abort(), []);
 
   const applySuggestion = (s: PiiSuggestion) => {
     setTargetColumn(s.column);
     setPrompt(s.suggested_prompt);
-    // Phone suggestions → default to E.164 standardisation mode
     if (s.pii_type === "phone") {
       setNormalizeMode("e164");
     } else if (s.pii_type === "date") {
@@ -169,7 +164,6 @@ export function UploadForm({ onJobCreated }: Props) {
         </p>
       </div>
 
-      {/* File drop zone */}
       <div
         style={{
           ...styles.dropZone,
@@ -210,7 +204,6 @@ export function UploadForm({ onJobCreated }: Props) {
         )}
       </div>
 
-      {/* PII suggestion chips */}
       {(suggestLoading || suggestions.length > 0) && (
         <div style={styles.suggestSection}>
           <span style={styles.suggestLabel}>
@@ -266,7 +259,6 @@ export function UploadForm({ onJobCreated }: Props) {
         </label>
       </div>
 
-      {/* Replacement field — only shown in "none" (literal replace) mode */}
       {normalizeMode === "none" && (
         <label style={styles.label}>
           <span style={styles.labelText}>

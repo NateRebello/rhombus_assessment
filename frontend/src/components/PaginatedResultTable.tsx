@@ -72,7 +72,6 @@ export function PaginatedResultTable({ jobId, totalRows, targetColumn }: Props) 
 
   return (
     <div style={styles.wrapper}>
-      {/* ── Table header: metadata + pagination ── */}
       <div style={styles.tableHeader}>
         <div style={styles.metaGroup}>
           <span style={styles.rowCount}>{totalRows.toLocaleString()}</span>
@@ -102,7 +101,6 @@ export function PaginatedResultTable({ jobId, totalRows, targetColumn }: Props) 
         </div>
       </div>
 
-      {/* ── Data table ── */}
       <div style={styles.tableScroll}>
         <table style={styles.table}>
           <thead>
@@ -152,7 +150,6 @@ export function PaginatedResultTable({ jobId, totalRows, targetColumn }: Props) 
         </table>
       </div>
 
-      {/* ── Footer ── */}
       {data.total_pages > 1 && (
         <div style={styles.tableFooter}>
           <button
