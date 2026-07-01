@@ -143,7 +143,33 @@ Concrete examples (memorise these exactly):
   "5-digit zip ending in 3"    →  \\d{4}3
 
 DO NOT write \\d{4}3 for the last group of a phone number.
-\\d{4}3 means FIVE subscriber digits — phone numbers only have four."""
+\\d{4}3 means FIVE subscriber digits — phone numbers only have four.
+
+CRITICAL — email domain / suffix (apex domain, no extra subdomain segment):
+When the user names a specific domain (e.g. company.com, gmail.com), match
+user@that-domain directly. Do NOT insert an extra [chars]+ or \\. before the
+domain label — that only matches subdomains like user@mail.company.com.
+
+Concrete examples (memorise these exactly):
+  "domain is company.com"              →  [a-zA-Z0-9._%+-]+@company\\.com
+  "emails ending with gmail.com"       →  [a-zA-Z0-9._%+-]+@gmail\\.com
+  "email addresses ending in @foo.org" →  [a-zA-Z0-9._%+-]+@foo\\.org
+
+WRONG for user@company.com (matches subdomains only, misses apex domain):
+  [a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.company\\.com
+  [a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+company\\.com"""
+
+_DOMAIN_FROM_PROMPT_RE = re.compile(
+    r"""
+    (?:
+        domain\s+is\s+ |
+        ending\s+(?:with|in)\s+(?:@)? |
+        emails?\s+at\s+
+    )
+    ([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
 _TRAILING_DIGIT_RE = re.compile(
     r'^(.*?)\\d\{(\d+)\}([0-9])((?:\\b|\\Z|\$)?)$'
@@ -179,13 +205,71 @@ def _fix_trailing_digit_quantifier(pattern: str) -> str:
     return pattern
 
 
+def _extract_domain_from_prompt(prompt: str) -> Optional[str]:
+    m = _DOMAIN_FROM_PROMPT_RE.search(prompt)
+    if m:
+        return m.group(1).lower()
+    m = re.search(
+        r"@([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+)",
+        prompt,
+        re.IGNORECASE,
+    )
+    return m.group(1).lower() if m else None
+
+
+def _matches_apex_email(pattern: str, domain: str) -> bool:
+    try:
+        return bool(re.search(pattern, f"user@{domain}"))
+    except re.error:
+        return False
+
+
+def _fix_email_domain_regex(pattern: str, prompt: str) -> str:
+    """Correct LLM patterns that require a bogus subdomain before the named apex domain."""
+    domain = _extract_domain_from_prompt(prompt)
+    if not domain or _matches_apex_email(pattern, domain):
+        return pattern
+
+    dom_lit = domain.replace(".", r"\.")
+    tail = rf"(?={dom_lit}(?:\\b|\\Z|\$))"
+    corrected = re.sub(rf"(@)\[[^\]]+\]\+\\\.{tail}", r"\1", pattern)
+    if corrected != pattern and _matches_apex_email(corrected, domain):
+        logger.info("Email domain regex fix (subdomain): %r → %r", pattern, corrected)
+        return corrected
+
+    corrected = re.sub(rf"(@)\[[^\]]+\]\+{tail}", r"\1", pattern)
+    if corrected != pattern and _matches_apex_email(corrected, domain):
+        logger.info("Email domain regex fix (concat): %r → %r", pattern, corrected)
+        return corrected
+
+    if "@" in pattern and dom_lit in pattern:
+        canonical = rf"[a-zA-Z0-9._%+-]+@{dom_lit}\b"
+        if _matches_apex_email(canonical, domain):
+            logger.info(
+                "Email domain regex fallback: %r → %r (prompt domain %r)",
+                pattern, canonical, domain,
+            )
+            return canonical
+
+    return pattern
+
+
+def _postprocess_regex(pattern: str, prompt: str) -> str:
+    pattern = _fix_trailing_digit_quantifier(pattern)
+    pattern = _fix_email_domain_regex(pattern, prompt)
+    return pattern
+
+
 def generate_regex(prompt: str) -> str:
-    cached = _redis_get(_cache_key(prompt))
+    cache_k = _cache_key(prompt)
+    cached = _redis_get(cache_k)
     if cached:
-        logger.info("Regex cache hit for prompt (sha256 prefix %s…)", _cache_key(prompt)[:12])
-        cached = _fix_trailing_digit_quantifier(cached)
-        validate_regex(cached)
-        return cached
+        logger.info("Regex cache hit for prompt (sha256 prefix %s…)", cache_k[:12])
+        pattern = _postprocess_regex(cached, prompt)
+        validate_regex(pattern)
+        if pattern != cached:
+            _redis_set(cache_k, pattern)
+        return pattern
 
     logger.info("Regex cache miss — calling LLM for prompt: %.80s…", prompt)
     response = _openai_client().chat.completions.create(
@@ -200,10 +284,10 @@ def generate_regex(prompt: str) -> str:
 
     raw = response.choices[0].message.content or ""
     pattern = raw.strip().strip("`").strip()
-    pattern = _fix_trailing_digit_quantifier(pattern)
+    pattern = _postprocess_regex(pattern, prompt)
 
     validate_regex(pattern)
-    _redis_set(_cache_key(prompt), pattern)
+    _redis_set(cache_k, pattern)
     return pattern
 
 
