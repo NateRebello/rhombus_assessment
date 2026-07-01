@@ -245,6 +245,10 @@ def generate_regex(prompt: str) -> str:
     cached = _redis_get(_cache_key(prompt))
     if cached:
         logger.info("Regex cache hit for prompt (sha256 prefix %s…)", _cache_key(prompt)[:12])
+        # Apply the trailing-digit fix retroactively: cached entries may have been
+        # stored before this correction was deployed.  The fix is idempotent on
+        # already-correct patterns, so re-applying it is always safe.
+        cached = _fix_trailing_digit_quantifier(cached)
         validate_regex(cached)
         return cached
 
