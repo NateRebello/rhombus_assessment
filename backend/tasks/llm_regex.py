@@ -152,7 +152,18 @@ _SYSTEM_PROMPT = """You are a regex generation assistant.
 Given a natural-language description, respond with a SINGLE Python-compatible
 regular expression on its own line — no explanation, no markdown, no code fences.
 The regex must be safe to use with Python's re module and Java's java.util.regex
-(for PySpark compatibility).  Do not include capturing groups unless essential."""
+(for PySpark compatibility).  Do not include capturing groups unless essential.
+
+CRITICAL — off-by-one rule for fixed-length numbers with a specific ending digit:
+When the description asks to match a fixed-length number that ends in a specific
+digit, the trailing digit is PART OF the number, not extra.  Adjust the last
+quantifier accordingly.
+
+Example — US phone number (10 digits total, format NXX-NXX-XXXX) ending in 3:
+  WRONG: \\d{3}[-. ]?\\d{3}[-. ]?\\d{4}3   ← expects 11 digits; never matches
+  RIGHT: \\d{3}[-. ]?\\d{3}[-. ]?\\d{3}3   ← last group \\d{3}+3 = 4 digits, total 10
+
+Apply the same logic to any other fixed-length number (SSNs, zip codes, etc.)."""
 
 
 def generate_regex(prompt: str) -> str:
