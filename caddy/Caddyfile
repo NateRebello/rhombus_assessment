@@ -19,15 +19,19 @@
 
 {$CADDY_HOSTNAME} {
     # Django API — all /api/* paths proxied to gunicorn on the internal network.
-    # Django never receives requests directly from the internet.
+    # Must be in its own handle block so that the try_files rewrite below
+    # (which runs before handle matching) does not rewrite /api/* paths to
+    # /index.html before the proxy can see them.
     handle /api/* {
         reverse_proxy web:8000
     }
 
     # React SPA static files.
-    # try_files falls back to index.html so client-side routes (React Router)
-    # work correctly — any path that isn't a real file gets the SPA entry point.
-    root * /srv/frontend
-    file_server
-    try_files {path} /index.html
+    # Wrapped in handle so try_files only fires for this block, never for
+    # requests already claimed by the /api/* handle above.
+    handle {
+        root * /srv/frontend
+        try_files {path} /index.html
+        file_server
+    }
 }
