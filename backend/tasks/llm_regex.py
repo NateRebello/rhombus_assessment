@@ -154,16 +154,80 @@ regular expression on its own line — no explanation, no markdown, no code fenc
 The regex must be safe to use with Python's re module and Java's java.util.regex
 (for PySpark compatibility).  Do not include capturing groups unless essential.
 
-CRITICAL — off-by-one rule for fixed-length numbers with a specific ending digit:
-When the description asks to match a fixed-length number that ends in a specific
-digit, the trailing digit is PART OF the number, not extra.  Adjust the last
-quantifier accordingly.
+CRITICAL — specific ending digit in a structured fixed-length number:
+The ending digit IS one of the digits already counted in the number.
+To include it, reduce the last \\d{N} by 1 and append the digit explicitly.
 
-Example — US phone number (10 digits total, format NXX-NXX-XXXX) ending in 3:
-  WRONG: \\d{3}[-. ]?\\d{3}[-. ]?\\d{4}3   ← expects 11 digits; never matches
-  RIGHT: \\d{3}[-. ]?\\d{3}[-. ]?\\d{3}3   ← last group \\d{3}+3 = 4 digits, total 10
+Concrete examples (memorise these exactly):
+  "phone numbers ending in 3"  →  \\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{3}3
+  "phone numbers ending in 7"  →  \\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{3}7
+  "SSN ending in 9"            →  \\d{3}-?\\d{2}-?\\d{3}9
+  "5-digit zip ending in 3"    →  \\d{4}3
 
-Apply the same logic to any other fixed-length number (SSNs, zip codes, etc.)."""
+DO NOT write \\d{4}3 for the last group of a phone number.
+\\d{4}3 means FIVE subscriber digits — phone numbers only have four."""
+
+
+# ── Trailing-digit quantifier correction ──────────────────────────────────────
+# The LLM reliably makes this mistake: given "phone numbers ending in 3" it
+# generates \d{3}[-.\s]?\d{3}[-.\s]?\d{4}3 — appending 3 AFTER the standard
+# last group, producing an 11-digit pattern instead of 10.
+#
+# The fix: if the total explicit digit count in the regex is exactly ONE MORE
+# THAN a well-known structured-number length (10 for US phone, 9 for SSN) AND
+# the corrected count IS that standard length, reduce the trailing \d{N} by 1.
+#
+# Guarded against over-correction: if the total already IS a standard length
+# (e.g. already 10 for phone), we leave it alone.
+
+_TRAILING_DIGIT_RE = re.compile(
+    r'^(.*?)\\d\{(\d+)\}([0-9])((?:\\b|\\Z|\$)?)$'
+)
+
+# Standard digit counts for common structured numbers.
+# Only apply the fix when the corrected total is one of these.
+_STANDARD_DIGIT_COUNTS = frozenset({9, 10})   # SSN=9, US phone=10
+
+
+def _fix_trailing_digit_quantifier(pattern: str) -> str:
+    """
+    Correct the LLM off-by-one for structured-number trailing-digit patterns.
+
+    \\b\\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{4}3\\b  →  \\b\\d{3}[-.\\s]?\\d{3}[-.\\s]?\\d{3}3\\b
+
+    Logic:
+      1. Must end with \\d{N}<digit>[optional anchor].
+      2. Must have ≥2 \\d{} groups (structured number — not a bare \\d{4}3 zip).
+      3. N must be ≥ 2 (never reduces \\d{1}).
+      4. Only fires if (sum_of_all_groups + 1) is NOT a standard length but
+         sum_of_all_groups IS — i.e. the trailing digit pushed it over by 1.
+    """
+    m = _TRAILING_DIGIT_RE.match(pattern)
+    if not m:
+        return pattern
+    prefix, n_str, digit, anchor = m.groups()
+    n = int(n_str)
+    if n < 2:
+        return pattern
+
+    all_groups = re.findall(r'\\d\{(\d+)\}', pattern)
+    if len(all_groups) < 2:
+        return pattern
+
+    group_sum = sum(int(g) for g in all_groups)   # digits already in \d{} groups
+    total_with_trailing = group_sum + 1            # +1 for the appended literal digit
+
+    # Apply only when: removing the +1 lands on a standard length AND
+    # the current total is NOT itself a standard length (avoids double-fix).
+    if group_sum in _STANDARD_DIGIT_COUNTS and total_with_trailing not in _STANDARD_DIGIT_COUNTS:
+        corrected = f"{prefix}\\d{{{n - 1}}}{digit}{anchor}"
+        logger.info(
+            "Trailing-digit quantifier fix: %r → %r (%d→%d digits)",
+            pattern, corrected, total_with_trailing, group_sum,
+        )
+        return corrected
+
+    return pattern
 
 
 def generate_regex(prompt: str) -> str:
@@ -171,7 +235,7 @@ def generate_regex(prompt: str) -> str:
     Return a validated regex string for the given natural-language prompt.
 
     Cache hit path (fast):   Redis lookup → validate → return
-    Cache miss path (slow):  LLM call → validate → write cache → return
+    Cache miss path (slow):  LLM call → fix → validate → write cache → return
 
     Raises:
         RegexSafetyError   – bad/unsafe regex (terminal, do not retry)
@@ -197,6 +261,10 @@ def generate_regex(prompt: str) -> str:
 
     raw = response.choices[0].message.content or ""
     pattern = raw.strip().strip("`").strip()
+
+    # Programmatic safety net: correct trailing-digit off-by-one before
+    # validation and caching so the fix propagates to all future cache hits.
+    pattern = _fix_trailing_digit_quantifier(pattern)
 
     validate_regex(pattern)
     _redis_set(_cache_key(prompt), pattern)
