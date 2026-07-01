@@ -157,10 +157,9 @@ export function UploadForm({ onJobCreated }: Props) {
   return (
     <form onSubmit={handleSubmit} style={styles.form}>
       <div style={styles.formHeader}>
-        <h2 style={styles.formTitle}>New Pattern-Matching Job</h2>
+        <h2 style={styles.formTitle}>New Job</h2>
         <p style={styles.formSubtitle}>
-          Describe a pattern in plain English — we'll generate a regex and apply it
-          at scale with PySpark.
+          Give us a pattern in plain english, we'll do the rest for you.
         </p>
       </div>
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { cancelJob } from "../api/client";
 import { PaginatedResultTable } from "../components/PaginatedResultTable";
 import { ProgressBar } from "../components/ProgressBar";
@@ -19,6 +19,29 @@ export default function HomePage() {
     setTargetColumn(column);
   };
 
+  useEffect(() => {
+    if (!jobId) return;
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("job") !== jobId) {
+      url.searchParams.set("job", jobId);
+      window.history.pushState({ rhombusJob: jobId }, "", url);
+    }
+
+    const onPopState = () => {
+      const id = new URLSearchParams(window.location.search).get("job");
+      if (id) {
+        setJobId(id);
+      } else {
+        setJobId(null);
+        setTargetColumn("");
+      }
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [jobId]);
+
   const handleCancel = async () => {
     if (!jobId) return;
     setCancelling(true);
@@ -33,6 +56,9 @@ export default function HomePage() {
   const handleReset = () => {
     setJobId(null);
     setTargetColumn("");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("job");
+    window.history.replaceState({}, "", url.pathname + url.search);
   };
 
   const isTerminal =

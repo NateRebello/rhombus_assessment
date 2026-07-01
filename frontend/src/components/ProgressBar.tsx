@@ -54,7 +54,7 @@ export function ProgressBar({ status, progress, generatedRegex, errorMessage }: 
 
       {status === "RUNNING" && (
         <p style={styles.hint}>
-          Processing your data via PySpark — this may take a moment…
+          Processing your Data, this may take a moment…
         </p>
       )}
 
