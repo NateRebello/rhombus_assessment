@@ -86,16 +86,13 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             gunicorn config.wsgi:application
-               --bind 0.0.0.0:8000
-               --workers 2
-               --timeout 120
-               --access-logfile -
-               --error-logfile -"
+    command: sh -c "python manage.py migrate --noinput && gunicorn config.wsgi:application"
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Gunicorn reads GUNICORN_CMD_ARGS directly — avoids shell-quoting issues
+      # with multiline YAML commands that prevent --bind from being parsed.
+      GUNICORN_CMD_ARGS: "--bind 0.0.0.0:8000 --workers 2 --timeout 120 --access-logfile - --error-logfile -"
     volumes:
       - uploads:/app/uploads
       - results:/app/results
