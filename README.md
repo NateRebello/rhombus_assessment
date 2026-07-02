@@ -4,11 +4,11 @@ Upload a CSV or Excel file, describe a pattern in plain English, and the system
 uses an LLM to generate a regex, applies it at scale via PySpark, and returns
 paginated results.
 
-**Live demo:** https://15-134-239-205.sslip.io
+**Live Website URL:** https://15-134-239-205.sslip.io
 
 ## Demo video
 
-<!-- Paste your embed or link here, e.g. [![Demo video](thumbnail-url)](https://youtube.com/watch?v=...) -->
+https://youtu.be/pgnQrhbdBWM
 
 ## Setup and run
 
