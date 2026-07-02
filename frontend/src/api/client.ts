@@ -105,6 +105,18 @@ export async function suggestPatterns(
   return handleResponse<SuggestPatternsResponse>(res);
 }
 
+export async function suggestPatternsFromFile(
+  file: File
+): Promise<SuggestPatternsResponse> {
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetch(`${BASE_URL}/api/jobs/suggest-patterns/`, {
+    method: "POST",
+    body,
+  });
+  return handleResponse<SuggestPatternsResponse>(res);
+}
+
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   const res = await fetch(`${BASE_URL}/api/jobs/${jobId}/status/`);
   return handleResponse<JobStatusResponse>(res);

@@ -8,10 +8,12 @@ from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .file_samples import extract_column_samples
 from .models import Job, JobStatus
 from .serializers import JobCreateSerializer, JobStatusSerializer
 
@@ -55,7 +57,6 @@ class JobCreateView(APIView):
         # couple message size to upload size.
         from tasks.pipeline import process_job
 
-        # task_id must match job.id so JobCancelView.revoke() targets the right task.
         process_job.apply_async((str(job.id),), task_id=str(job.id))
 
         return Response({"job_id": str(job.id)}, status=status.HTTP_202_ACCEPTED)
@@ -136,18 +137,30 @@ class JobResultView(APIView):
 
 
 class SuggestPatternsView(APIView):
-    def post(self, request: Request) -> Response:
-        columns = request.data.get("columns", {})
-        if not isinstance(columns, dict) or not columns:
-            return Response({"suggestions": []})
+    parser_classes = [MultiPartParser, JSONParser]
 
-        sanitised = {}
-        for col, vals in columns.items():
-            if not isinstance(vals, list):
-                continue
-            clean = [str(v) for v in vals if v is not None and str(v).strip()][:10]
-            if clean:
-                sanitised[str(col)[:256]] = clean
+    def post(self, request: Request) -> Response:
+        uploaded = request.FILES.get("file")
+        if uploaded:
+            try:
+                sanitised = extract_column_samples(uploaded)
+            except ValueError as exc:
+                return Response({"suggestions": [], "error": str(exc)})
+            except Exception as exc:
+                logger.warning("extract_column_samples failed: %s", exc)
+                return Response({"suggestions": [], "error": str(exc)})
+        else:
+            columns = request.data.get("columns", {})
+            if not isinstance(columns, dict) or not columns:
+                return Response({"suggestions": []})
+
+            sanitised = {}
+            for col, vals in columns.items():
+                if not isinstance(vals, list):
+                    continue
+                clean = [str(v) for v in vals if v is not None and str(v).strip()][:10]
+                if clean:
+                    sanitised[str(col)[:256]] = clean
 
         if not sanitised:
             return Response({"suggestions": []})
