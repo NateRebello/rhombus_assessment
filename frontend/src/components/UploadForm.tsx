@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import * as XLSX from "xlsx";
 import { ApiError, createJob, suggestPatterns, NormalizeMode, PiiSuggestion } from "../api/client";
 
 interface Props {
@@ -55,6 +56,55 @@ function parseCsvSamples(text: string, maxRows = 30): Record<string, string[]> {
   return Object.fromEntries(Object.entries(samples).filter(([, v]) => v.length > 0));
 }
 
+const SUPPORTED_SAMPLE_EXTENSIONS = [".csv", ".xlsx", ".xls"] as const;
+
+function isSupportedSampleFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return SUPPORTED_SAMPLE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+/** Parse first sheet of an Excel file, return column → sample values map. */
+async function parseExcelSamples(file: File, maxRows = 30): Promise<Record<string, string[]>> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return {};
+
+  const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(
+    workbook.Sheets[sheetName],
+    { header: 1, defval: "" }
+  );
+  if (rows.length < 2) return {};
+
+  const headers = rows[0].map((h) => String(h ?? "").trim());
+  const samples: Record<string, string[]> = {};
+  headers.forEach((h) => {
+    if (h) samples[h] = [];
+  });
+
+  for (let r = 1; r < Math.min(rows.length, maxRows + 1); r++) {
+    const cells = rows[r] ?? [];
+    headers.forEach((h, i) => {
+      if (!h) return;
+      const val = String(cells[i] ?? "").trim();
+      if (val && samples[h].length < 8) samples[h].push(val);
+    });
+  }
+
+  return Object.fromEntries(Object.entries(samples).filter(([, v]) => v.length > 0));
+}
+
+async function extractColumnSamples(file: File): Promise<Record<string, string[]>> {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".csv")) {
+    return parseCsvSamples(await file.text());
+  }
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    return parseExcelSamples(file);
+  }
+  return {};
+}
+
 export function UploadForm({ onJobCreated }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -70,7 +120,7 @@ export function UploadForm({ onJobCreated }: Props) {
   const suggestAbortRef = useRef<AbortController | null>(null);
 
   const runSuggestions = useCallback(async (selectedFile: File) => {
-    if (!selectedFile.name.toLowerCase().endsWith(".csv")) {
+    if (!isSupportedSampleFile(selectedFile.name)) {
       setSuggestions([]);
       return;
     }
@@ -83,8 +133,7 @@ export function UploadForm({ onJobCreated }: Props) {
     setSuggestions([]);
 
     try {
-      const text = await selectedFile.text();
-      const columnSamples = parseCsvSamples(text);
+      const columnSamples = await extractColumnSamples(selectedFile);
       if (Object.keys(columnSamples).length === 0) return;
 
       const result = await suggestPatterns(columnSamples);
