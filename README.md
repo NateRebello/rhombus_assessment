@@ -72,7 +72,7 @@ PySpark  ──── Shared volume (uploads + Parquet results)
 | `spark_jobs/` isolated from Django | PySpark starts a JVM. Importing it in the web process would start a JVM on every gunicorn worker. The transform module can also be run standalone for debugging. |
 | PySpark imported inside the Celery task | Avoids JVM startup on worker boot; only tasks that need Spark pay the cost. |
 | Parquet output + paginated reads | Results can be millions of rows. Loading them into the web process would OOM. PyArrow reads one slice per page request. |
-| Redis regex cache | LLM calls add latency and cost. Identical prompts (sha256 of normalised text) skip the LLM for ~1 hour (`REGEX_CACHE_TTL_SECONDS`). |
+| Redis regex cache | LLM calls add latency and cost. Identical prompts skip the LLM for ~1 hour (`REGEX_CACHE_TTL_SECONDS`). |
 | Static ReDoS validation before Spark | Nested quantifiers and timeout-tested patterns are rejected so a bad LLM regex cannot hang the worker on large data. |
 | Same-origin frontend + API in production | No CORS; the browser calls relative `/api/` paths on the same host Caddy serves. |
 
@@ -84,8 +84,5 @@ PySpark  ──── Shared volume (uploads + Parquet results)
 
 **Regex cache:** Stored in Redis without persistence. `docker compose down` clears cached regexes.
 
-**LLM variability:** Regex quality depends on prompt wording. Domain-specific prompts (e.g. “domain is company.com”) work better than vague suffix phrasing. Post-processing corrects common off-by-one phone patterns and apex-domain email mistakes.
-
 **First result page latency:** The first paginated read of a large Parquet output scans file metadata; subsequent pages are faster.
 
-**Testing:** No automated test suite is included. Manual verification steps are in `TESTING_CHECKLIST.md`. Sample files are in `test_data/` (CSV and Excel).
